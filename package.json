@@ -1,0 +1,14 @@
+{
+  "name": "nrg-chat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker behind Ask Newborough Warren: a locked proxy to the Claude API with a spending cap, rate limit and question log.",
+  "scripts": {
+    "test": "node --no-warnings --test test/*.test.js",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.135.0"
+  }
+}
