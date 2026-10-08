@@ -11,9 +11,13 @@
 // Spec: claude/NRG_spec_chatbot_public_2026-10-08.md (Martin, 2026-10-08: log what
 // is asked; GBP 10 a month; the stronger model for everyone; 12 months' retention).
 //
-// VERSION 1.0.0 - 2026-10-08
+// VERSION 1.0.1 - 2026-10-09
+//   1.0.1: an account spend limit reached at Anthropic (the Console limit, HTTP 400
+//     "You have reached your specified API usage limits", or the tier cap, HTTP 429
+//     enforced_spend_limit_reached) now answers budget_exhausted, so the page falls
+//     back to search; it had answered upstream_error / rate_limited.
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.0.1";
 
 // USD per million tokens. Published prices (platform.claude.com/docs/en/about-claude/pricing,
 // read 2026-10-08). Cache writes are charged at 1.25x input (5-minute cache).
@@ -222,6 +226,10 @@ async function handleAsk(request, env, origin, fetchImpl, now) {
   } catch { return fail("upstream_error", 502, origin); }
   if (!r.ok) {
     const t = j && j.error && j.error.type;
+    const msg = String(j && j.error && j.error.message || "");
+    const ecode = j && j.error && j.error.details && j.error.details.error_code;
+    if (ecode === "enforced_spend_limit_reached" || /reached your specified (workspace )?API usage limits/i.test(msg))
+      return fail("budget_exhausted", 503, origin);
     if (r.status === 429 || t === "rate_limit_error") return fail("rate_limited", 429, origin);
     return fail(r.status === 529 || r.status >= 500 ? "unavailable" : "upstream_error", 502, origin);
   }

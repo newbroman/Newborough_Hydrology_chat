@@ -163,7 +163,7 @@ test("the budget stops new questions at today's share, and lets a question in pr
   assert.equal((await r.json()).code, "budget_exhausted");
   // /status reports it.
   r = await h.fetch(req("/status", { method: "GET" }), env);
-  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.0.0" });
+  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.0.1" });
 });
 
 test("rate limit: 10 new questions an hour per visitor; other visitors unaffected", async () => {
@@ -244,4 +244,17 @@ test("analyse collects every id the searches returned", () => {
   assert.deepEqual([...a.retrieved].sort(), ["d12", "f:outputs/02_cluster_stats.csv", "n5", "r3"]);
   assert.equal(a.rounds, 1);
   assert.equal(a.isNewQuestion, false);
+});
+
+test("an account spend limit at Anthropic reads as budget_exhausted", async () => {
+  _resetConfigCache();
+  const db = d1(), env = envWith(db);
+  const h = makeHandler(mockFetch([
+    { status: 400, body: { type: "error", error: { type: "invalid_request_error", message: "You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC." } } },
+    { status: 429, body: { type: "error", error: { type: "rate_limit_error", message: "x", details: { error_code: "enforced_spend_limit_reached" } } } },
+  ]), () => NOW);
+  for (const q of ["q-500001", "q-500002"]) {
+    const r = await h.fetch(req("/ask", { body: { qid: q, messages: question() } }), env);
+    assert.equal((await r.json()).code, "budget_exhausted");
+  }
 });

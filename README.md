@@ -26,8 +26,12 @@ Everything below runs on your own machine, in a clone of this repository. You
 type the API key into the terminal prompt only, never into a chat or a file.
 
 1. **API key.** At [platform.claude.com](https://platform.claude.com), create an
-   API key for this bot. Under *Limits*, set a monthly usage limit a little above
-   the Worker's cap (the Worker stops first; this is the backstop).
+   API key for this bot (Settings > API keys). Then, under Settings > Billing >
+   *Spend limits*, click **Set limit** and enter a monthly limit a little above the
+   Worker's cap (the Worker stops first; this is the backstop). If that section is
+   missing, the account needs billing set up or the admin role. If the Console limit
+   is ever reached first, the Worker treats it like its own cap and the page falls
+   back to search.
 2. **Cloudflare.** Create a free account at [dash.cloudflare.com](https://dash.cloudflare.com).
 3. **Install and sign in:**
    ```bash
