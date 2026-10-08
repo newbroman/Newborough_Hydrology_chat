@@ -16,6 +16,7 @@
 //     "You have reached your specified API usage limits", or the tier cap, HTTP 429
 //     enforced_spend_limit_reached) now answers budget_exhausted, so the page falls
 //     back to search; it had answered upstream_error / rate_limited.
+//     An exhausted prepaid credit balance ("credit balance is too low") is treated the same.
 
 export const VERSION = "1.0.1";
 
@@ -228,7 +229,7 @@ async function handleAsk(request, env, origin, fetchImpl, now) {
     const t = j && j.error && j.error.type;
     const msg = String(j && j.error && j.error.message || "");
     const ecode = j && j.error && j.error.details && j.error.details.error_code;
-    if (ecode === "enforced_spend_limit_reached" || /reached your specified (workspace )?API usage limits/i.test(msg))
+    if (ecode === "enforced_spend_limit_reached" || /reached your specified (workspace )?API usage limits|credit balance is too low/i.test(msg))
       return fail("budget_exhausted", 503, origin);
     if (r.status === 429 || t === "rate_limit_error") return fail("rate_limited", 429, origin);
     return fail(r.status === 529 || r.status >= 500 ? "unavailable" : "upstream_error", 502, origin);

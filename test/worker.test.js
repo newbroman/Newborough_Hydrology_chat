@@ -252,8 +252,9 @@ test("an account spend limit at Anthropic reads as budget_exhausted", async () =
   const h = makeHandler(mockFetch([
     { status: 400, body: { type: "error", error: { type: "invalid_request_error", message: "You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC." } } },
     { status: 429, body: { type: "error", error: { type: "rate_limit_error", message: "x", details: { error_code: "enforced_spend_limit_reached" } } } },
+    { status: 400, body: { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } } },
   ]), () => NOW);
-  for (const q of ["q-500001", "q-500002"]) {
+  for (const q of ["q-500001", "q-500002", "q-500003"]) {
     const r = await h.fetch(req("/ask", { body: { qid: q, messages: question() } }), env);
     assert.equal((await r.json()).code, "budget_exhausted");
   }
