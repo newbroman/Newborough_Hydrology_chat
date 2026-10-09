@@ -1,4 +1,4 @@
--- D1 schema for the Newborough Warren chatbot Worker (src/index.js 1.0.0).
+-- D1 schema for the Newborough Warren chatbot Worker (src/index.js 1.2.0). Safe to re-run.
 -- Apply once: npx wrangler d1 execute nrg-chat --remote --file=schema.sql
 
 -- One row per answered question. No IP address, user agent or any identifier.
@@ -33,3 +33,14 @@ CREATE TABLE IF NOT EXISTS spend (month TEXT PRIMARY KEY, usd REAL NOT NULL DEFA
 CREATE TABLE IF NOT EXISTS rate (
   key TEXT PRIMARY KEY, day TEXT, hour TEXT, n_day INTEGER, n_hour INTEGER
 );
+
+-- Anonymous feedback (1.2.0): one row per "Helpful" / "Something's wrong" / general note.
+-- qid ties it to the question it is about (empty for general feedback). No identifier.
+CREATE TABLE IF NOT EXISTS feedback (
+  id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts   TEXT NOT NULL,                -- UTC, to the minute
+  qid  TEXT,
+  kind TEXT NOT NULL,                -- helpful | wrong | general
+  text TEXT
+);
+CREATE INDEX IF NOT EXISTS feedback_ts ON feedback (ts);

@@ -18,6 +18,9 @@ the visitor's browser. This Worker sits between the page and the Claude API:
   runs on the visitor's own Claude account and starts a fresh conversation;
 - logs each question with its answer, citations, language, cost and warning flags,
   kept for 365 days. No IP address, user agent or other identifier is stored.
+- takes anonymous feedback on answers ("Helpful", "Something's wrong" with a note) and
+  general notes, at most 5 per visitor per day, kept 365 days. Visitors who want a reply
+  are pointed to the project's GitHub issues.
 
 When the monthly cap is reached or the Worker is unavailable, the page falls back
 to searching the documents.
@@ -70,8 +73,9 @@ bash scripts/export_log.sh            # this month
 bash scripts/export_log.sh 2026-11    # another month
 ```
 
-Writes `exports/chat_log_<month>.csv` (git-ignored) and prints a summary:
-questions, languages, flags and spend.
+Writes `exports/chat_log_<month>.csv` and `exports/chat_feedback_<month>.csv`
+(git-ignored) and prints a summary: questions, languages, flags, spend, and the
+feedback, answers marked "Something's wrong" first.
 
 ## Changing things
 

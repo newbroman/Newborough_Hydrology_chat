@@ -11,7 +11,12 @@
 // Spec: claude/NRG_spec_chatbot_public_2026-10-08.md (Martin, 2026-10-08: log what
 // is asked; GBP 10 a month; the stronger model for everyone; 12 months' retention).
 //
-// VERSION 1.1.0 - 2026-10-09
+// VERSION 1.2.0 - 2026-10-09
+//   1.2.0: anonymous feedback. POST /feedback {qid?, kind: helpful | wrong | general, text?}
+//     stores one row (no identifier), at most FEEDBACK_PER_DAY (5) per visitor per day on the
+//     same salted-hash counter scheme; kept RETENTION_DAYS. Martin, 2026-10-09: feedback
+//     anonymous, replies through the project's GitHub issues (D-248).
+//   1.1.0 (earlier entry follows):
 //   1.1.0: a daily allowance per visitor (RATE_PER_DAY, 10; resets at 00:00 UTC). When it is
 //     used up the Worker answers daily_limit (not rate_limited), so the page can offer the
 //     Claude version of the bot. /status reports the visitor's remaining questions and the
@@ -26,7 +31,7 @@
 //     back to search; it had answered upstream_error / rate_limited.
 //     An exhausted prepaid credit balance ("credit balance is too low") is treated the same.
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 
 // USD per million tokens. Published prices (platform.claude.com/docs/en/about-claude/pricing,
 // read 2026-10-08). Cache writes are charged at 1.25x input (5-minute cache).
@@ -159,8 +164,8 @@ async function spentThisMonth(db, month) {
   return r ? Number(r.usd) : 0;
 }
 
-async function rateKey(env, ip, now) {
-  return sha256hex(`${env.IP_SALT || ""}|${dayKey(now)}|${ip}`);
+async function rateKey(env, ip, now, bucket = "") {
+  return sha256hex(`${env.IP_SALT || ""}|${dayKey(now)}|${ip}${bucket ? "|" + bucket : ""}`);
 }
 function perDay(env) { return Number(env.RATE_PER_DAY || 10); }
 
@@ -304,11 +309,44 @@ async function handleAsk(request, env, origin, fetchImpl, now) {
   return json(out, 200, origin);
 }
 
+const FEEDBACK_KINDS = ["helpful", "wrong", "general"];
+const FEEDBACK_MAX_CHARS = 1000;
+
+async function handleFeedback(request, env, origin, now) {
+  const raw = await request.text();
+  if (raw.length > 8000) return fail("bad_request", 413, origin);
+  let b;
+  try { b = JSON.parse(raw); } catch { return fail("bad_request", 400, origin, "not JSON"); }
+  const kind = String(b.kind || "");
+  if (!FEEDBACK_KINDS.includes(kind)) return fail("bad_request", 400, origin, "kind");
+  const text = String(b.text || "").trim();
+  if (text.length > FEEDBACK_MAX_CHARS) return fail("too_long", 400, origin);
+  if (kind !== "helpful" && !text) return fail("bad_request", 400, origin, "empty");
+  const qid = b.qid == null ? "" : String(b.qid);
+  if (qid && !/^[\w.-]{6,64}$/.test(qid)) return fail("bad_request", 400, origin, "qid");
+  if (kind === "general" && qid) return fail("bad_request", 400, origin, "general has no qid");
+  if (kind !== "general" && !qid) return fail("bad_request", 400, origin, "qid needed");
+  // Its own daily counter, separate from questions.
+  const ip = request.headers.get("cf-connecting-ip") || "unknown";
+  const key = await rateKey(env, ip, now, "fb");
+  const st = await rateState(env.DB, key, now);
+  if (st.nDay >= Number(env.FEEDBACK_PER_DAY || 5)) return fail("rate_limited", 429, origin);
+  await env.DB.prepare(
+    "INSERT INTO rate (key, day, hour, n_day, n_hour) VALUES (?, ?, ?, ?, ?) " +
+    "ON CONFLICT(key) DO UPDATE SET day = excluded.day, hour = excluded.hour, " +
+    "n_day = excluded.n_day, n_hour = excluded.n_hour"
+  ).bind(key, st.day, st.hour, st.nDay + 1, st.nHour + 1).run();
+  await env.DB.prepare("INSERT INTO feedback (ts, qid, kind, text) VALUES (?, ?, ?, ?)")
+    .bind(now.toISOString().slice(0, 16) + "Z", qid || null, kind, text || null).run();
+  return json({ ok: true }, 200, origin);
+}
+
 export async function retention(env, now) {
   const days = Number(env.RETENTION_DAYS || 365);
   const cutoff = new Date(now.getTime() - days * 86400_000).toISOString();
   const twoDays = new Date(now.getTime() - 2 * 86400_000);
   await env.DB.prepare("DELETE FROM questions WHERE ts < ?").bind(cutoff).run();
+  await env.DB.prepare("DELETE FROM feedback WHERE ts < ?").bind(cutoff).run();
   await env.DB.prepare("DELETE FROM rounds WHERE ts < ?").bind(twoDays.toISOString()).run();
   await env.DB.prepare("DELETE FROM rate WHERE day < ?").bind(dayKey(twoDays)).run();
 }
@@ -328,6 +366,7 @@ export function makeHandler(fetchImpl = (...a) => fetch(...a), clock = () => new
       try {
         if (url.pathname === "/status" && request.method === "GET") return await handleStatus(request, env, origin, fetchImpl, clock());
         if (url.pathname === "/ask" && request.method === "POST") return await handleAsk(request, env, origin, fetchImpl, clock());
+        if (url.pathname === "/feedback" && request.method === "POST") return await handleFeedback(request, env, origin, clock());
       } catch (e) {
         return fail("upstream_error", 500, origin);
       }

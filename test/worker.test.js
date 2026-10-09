@@ -164,7 +164,7 @@ test("the budget stops new questions at today's share, and lets a question in pr
   assert.equal((await r.json()).code, "budget_exhausted");
   // /status reports it.
   r = await h.fetch(req("/status", { method: "GET" }), env);
-  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.1.0", remaining: 10, per_day: 10 });
+  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.2.0", remaining: 10, per_day: 10 });
 });
 
 test("daily allowance: 10 a day per visitor, counted on new questions only; others unaffected", async () => {
@@ -297,4 +297,46 @@ test("thinking blocks are accepted from the assistant and refused from the user"
   assert.equal(analyse(ok, CONFIG).error, undefined);
   const bad = [{ role: "user", content: [{ type: "thinking", thinking: "x", signature: "s" }] }];
   assert.equal(analyse(bad, CONFIG).error, "thinking from user");
+});
+
+test("feedback: helpful, wrong with text, general; anonymous; 5 a day; validated", async () => {
+  _resetConfigCache();
+  const db = d1(), env = envWith(db);
+  const h = makeHandler(mockFetch([]), () => NOW);
+  const fb = (body, ip) => h.fetch(req("/feedback", { body, ip }), env);
+  let r = await fb({ qid: "q-700001", kind: "helpful" });
+  assert.equal(r.status, 200);
+  r = await fb({ qid: "q-700001", kind: "wrong", text: "The 220 m figure is the reach, not the drawdown." });
+  assert.equal(r.status, 200);
+  r = await fb({ kind: "general", text: "Please cover the scrape sites." });
+  assert.equal(r.status, 200);
+  // validation
+  assert.equal((await fb({ qid: "q-700001", kind: "wrong" })).status, 400);              // no text
+  assert.equal((await fb({ kind: "general", text: "x", qid: "q-700001" })).status, 400); // general with qid
+  assert.equal((await fb({ kind: "wrong", text: "x" })).status, 400);                    // answer feedback needs qid
+  assert.equal((await fb({ qid: "q-700001", kind: "praise" })).status, 400);             // unknown kind
+  r = await fb({ kind: "general", text: "x".repeat(1001) });
+  assert.equal((await r.json()).code, "too_long");
+  // two more accepted (5 in all), then refused; questions are not affected
+  await fb({ kind: "general", text: "a" }); await fb({ kind: "general", text: "b" });
+  r = await fb({ kind: "general", text: "c" });
+  assert.equal((await r.json()).code, "rate_limited");
+  r = await fb({ kind: "general", text: "other visitor" }, "5.6.7.8");
+  assert.equal(r.status, 200);
+  const st = await (await h.fetch(req("/status", { method: "GET" }), env)).json();
+  assert.equal(st.remaining, 10);
+  const rows = db.raw.prepare("SELECT ts, qid, kind, text FROM feedback ORDER BY id").all();
+  assert.equal(rows.length, 6);
+  assert.deepEqual(rows.slice(0, 3).map(x => [x.qid, x.kind]), [["q-700001", "helpful"], ["q-700001", "wrong"], [null, "general"]]);
+  assert.ok(!JSON.stringify(rows).includes("1.2.3.4"));
+  // wrong origin refused
+  r = await h.fetch(req("/feedback", { body: { kind: "general", text: "x" }, origin: "https://evil.example" }), env);
+  assert.equal(r.status, 403);
+});
+
+test("retention also deletes feedback older than a year", async () => {
+  const db = d1(), env = envWith(db);
+  db.raw.prepare("INSERT INTO feedback (ts, qid, kind, text) VALUES ('2025-10-01T00:00Z', NULL, 'general', 'old'), ('2026-10-01T00:00Z', NULL, 'general', 'new')").run();
+  await retention(env, NOW);
+  assert.deepEqual(db.raw.prepare("SELECT text FROM feedback").all().map(r => r.text), ["new"]);
 });
