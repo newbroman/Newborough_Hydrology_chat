@@ -12,7 +12,7 @@ the visitor's browser. This Worker sits between the page and the Claude API:
   `chat/chat_config.json`, so the key cannot be used for anything but this bot;
 - meters spend from each response's token usage and stops at the monthly cap
   (`MONTHLY_CAP_GBP`, with a daily share so one busy day cannot use the month);
-- gives each visitor 10 questions a day (`RATE_PER_DAY`, resetting at 00:00 UTC),
+- gives each visitor 5 questions a day (`RATE_PER_DAY`, resetting at 00:00 UTC),
   counted by a salted hash of the IP address that is never logged and is deleted
   after two days. At the limit the page offers the Claude version of the bot, which
   runs on the visitor's own Claude account and starts a fresh conversation;

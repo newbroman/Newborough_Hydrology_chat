@@ -12,9 +12,9 @@ CONFIG_URL = "https://newbroman.github.io/Newborough_Hydrology/chat/chat_config.
 MONTHLY_CAP_GBP = "10"
 # Conversion for the cap; review against the Anthropic invoice.
 GBP_PER_USD = "0.80"
-RATE_PER_HOUR = "10"
+RATE_PER_HOUR = "5"
 # Questions per visitor per day (resets 00:00 UTC). At the limit the page offers the Claude version (D-247).
-RATE_PER_DAY = "10"
+RATE_PER_DAY = "5"
 # Feedback notes per visitor per day (D-248).
 FEEDBACK_PER_DAY = "5"
 RETENTION_DAYS = "365"
