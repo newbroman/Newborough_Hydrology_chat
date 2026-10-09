@@ -51,7 +51,8 @@ function mockFetch(script) {
 }
 
 const usage = { input_tokens: 2000, output_tokens: 300, cache_read_input_tokens: 1500, cache_creation_input_tokens: 0 };
-const toolUse = { content: [{ type: "tool_use", id: "tu1", name: "search_documents", input: { queries: ["x"] } }],
+const toolUse = { content: [{ type: "thinking", thinking: "", signature: "sig" },
+                            { type: "tool_use", id: "tu1", name: "search_documents", input: { queries: ["x"] } }],
                   stop_reason: "tool_use", usage };
 const final = { content: [{ type: "text", text: "The water table rises in winter [[d12]] [[n5]]." }],
                 stop_reason: "end_turn", usage };
@@ -163,7 +164,7 @@ test("the budget stops new questions at today's share, and lets a question in pr
   assert.equal((await r.json()).code, "budget_exhausted");
   // /status reports it.
   r = await h.fetch(req("/status", { method: "GET" }), env);
-  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.0.1" });
+  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.0.2" });
 });
 
 test("rate limit: 10 new questions an hour per visitor; other visitors unaffected", async () => {
@@ -258,4 +259,13 @@ test("an account spend limit at Anthropic reads as budget_exhausted", async () =
     const r = await h.fetch(req("/ask", { body: { qid: q, messages: question() } }), env);
     assert.equal((await r.json()).code, "budget_exhausted");
   }
+});
+
+test("thinking blocks are accepted from the assistant and refused from the user", () => {
+  const ok = [...question(),
+    { role: "assistant", content: [{ type: "thinking", thinking: "", signature: "s" }, { type: "tool_use", id: "t", name: "search_documents", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "[]" }] }];
+  assert.equal(analyse(ok, CONFIG).error, undefined);
+  const bad = [{ role: "user", content: [{ type: "thinking", thinking: "x", signature: "s" }] }];
+  assert.equal(analyse(bad, CONFIG).error, "thinking from user");
 });

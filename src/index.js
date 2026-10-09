@@ -11,14 +11,17 @@
 // Spec: claude/NRG_spec_chatbot_public_2026-10-08.md (Martin, 2026-10-08: log what
 // is asked; GBP 10 a month; the stronger model for everyone; 12 months' retention).
 //
-// VERSION 1.0.1 - 2026-10-09
+// VERSION 1.0.2 - 2026-10-09
+//   1.0.2: assistant turns may carry thinking / redacted_thinking blocks. Opus 5.5 returns
+//     them with a tool call and the API needs them passed back unchanged; 1.0.1 refused
+//     them as "bad block", so every question needing a second round failed (live test).
 //   1.0.1: an account spend limit reached at Anthropic (the Console limit, HTTP 400
 //     "You have reached your specified API usage limits", or the tier cap, HTTP 429
 //     enforced_spend_limit_reached) now answers budget_exhausted, so the page falls
 //     back to search; it had answered upstream_error / rate_limited.
 //     An exhausted prepaid credit balance ("credit balance is too low") is treated the same.
 
-export const VERSION = "1.0.1";
+export const VERSION = "1.0.2";
 
 // USD per million tokens. Published prices (platform.claude.com/docs/en/about-claude/pricing,
 // read 2026-10-08). Cache writes are charged at 1.25x input (5-minute cache).
@@ -107,7 +110,8 @@ export function analyse(messages, cfg) {
     if (typeof m.content === "string") continue;
     if (!Array.isArray(m.content)) return { error: "bad content" };
     for (const b of m.content) {
-      if (!b || !["text", "tool_use", "tool_result"].includes(b.type)) return { error: "bad block" };
+      if (!b || !["text", "tool_use", "tool_result", "thinking", "redacted_thinking"].includes(b.type)) return { error: "bad block" };
+      if ((b.type === "thinking" || b.type === "redacted_thinking") && m.role !== "assistant") return { error: "thinking from user" };
       if (b.type === "tool_use" && m.role !== "assistant") return { error: "tool_use from user" };
       if (b.type === "tool_result" && m.role !== "user") return { error: "tool_result from assistant" };
     }
