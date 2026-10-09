@@ -11,7 +11,12 @@
 // Spec: claude/NRG_spec_chatbot_public_2026-10-08.md (Martin, 2026-10-08: log what
 // is asked; GBP 10 a month; the stronger model for everyone; 12 months' retention).
 //
-// VERSION 1.0.2 - 2026-10-09
+// VERSION 1.1.0 - 2026-10-09
+//   1.1.0: a daily allowance per visitor (RATE_PER_DAY, 10; resets at 00:00 UTC). When it is
+//     used up the Worker answers daily_limit (not rate_limited), so the page can offer the
+//     Claude version of the bot. /status reports the visitor's remaining questions and the
+//     daily allowance; /ask reports remaining when a new question is counted. Martin,
+//     2026-10-09: "go ahead with the turn of day" (D-247).
 //   1.0.2: assistant turns may carry thinking / redacted_thinking blocks. Opus 5.5 returns
 //     them with a tool call and the API needs them passed back unchanged; 1.0.1 refused
 //     them as "bad block", so every question needing a second round failed (live test).
@@ -21,7 +26,7 @@
 //     back to search; it had answered upstream_error / rate_limited.
 //     An exhausted prepaid credit balance ("credit balance is too low") is treated the same.
 
-export const VERSION = "1.0.2";
+export const VERSION = "1.1.0";
 
 // USD per million tokens. Published prices (platform.claude.com/docs/en/about-claude/pricing,
 // read 2026-10-08). Cache writes are charged at 1.25x input (5-minute cache).
@@ -154,31 +159,52 @@ async function spentThisMonth(db, month) {
   return r ? Number(r.usd) : 0;
 }
 
-async function rateCheck(db, env, ip, now) {
-  const salt = env.IP_SALT || "";
-  const key = await sha256hex(`${salt}|${dayKey(now)}|${ip}`);
+async function rateKey(env, ip, now) {
+  return sha256hex(`${env.IP_SALT || ""}|${dayKey(now)}|${ip}`);
+}
+function perDay(env) { return Number(env.RATE_PER_DAY || 10); }
+
+// The visitor's counts for today and this hour (zero when there is no row for today).
+async function rateState(db, key, now) {
   const day = dayKey(now), hour = now.toISOString().slice(0, 13);
   const row = await db.prepare("SELECT day, hour, n_day, n_hour FROM rate WHERE key = ?").bind(key).first();
   let nDay = 0, nHour = 0;
   if (row && row.day === day) { nDay = row.n_day; nHour = row.hour === hour ? row.n_hour : 0; }
-  if (nHour >= Number(env.RATE_PER_HOUR || 10) || nDay >= Number(env.RATE_PER_DAY || 30)) return false;
+  return { day, hour, nDay, nHour };
+}
+
+// Counts a new question. Returns {ok, code, remaining}.
+async function rateTake(db, env, ip, now) {
+  const key = await rateKey(env, ip, now);
+  const st = await rateState(db, key, now);
+  const pd = perDay(env);
+  if (st.nDay >= pd) return { ok: false, code: "daily_limit", remaining: 0 };
+  if (st.nHour >= Number(env.RATE_PER_HOUR || 10)) return { ok: false, code: "rate_limited", remaining: pd - st.nDay };
   await db.prepare(
     "INSERT INTO rate (key, day, hour, n_day, n_hour) VALUES (?, ?, ?, ?, ?) " +
     "ON CONFLICT(key) DO UPDATE SET day = excluded.day, hour = excluded.hour, " +
     "n_day = excluded.n_day, n_hour = excluded.n_hour"
-  ).bind(key, day, hour, nDay + 1, nHour + 1).run();
-  return true;
+  ).bind(key, st.day, st.hour, st.nDay + 1, st.nHour + 1).run();
+  return { ok: true, remaining: pd - st.nDay - 1 };
+}
+
+async function remainingFor(db, env, ip, now) {
+  const st = await rateState(db, await rateKey(env, ip, now), now);
+  return Math.max(0, perDay(env) - st.nDay);
 }
 
 // ------------------------------------------------------------------ handlers
-async function handleStatus(env, origin, fetchImpl, now) {
+async function handleStatus(request, env, origin, fetchImpl, now) {
   let available = !!env.ANTHROPIC_API_KEY, reason = available ? "" : "not configured";
   try { await getConfig(env, fetchImpl); } catch (e) { available = false; reason = "config"; }
   if (available) {
     const { toDate } = allowance(env, now);
     if (await spentThisMonth(env.DB, monthKey(now)) >= toDate) { available = false; reason = "budget"; }
   }
-  return json({ available, reason, version: VERSION }, 200, origin);
+  const ip = request.headers.get("cf-connecting-ip") || "unknown";
+  const remaining = await remainingFor(env.DB, env, ip, now);
+  if (available && remaining <= 0) { available = false; reason = "daily_limit"; }
+  return json({ available, reason, version: VERSION, remaining, per_day: perDay(env) }, 200, origin);
 }
 
 async function handleAsk(request, env, origin, fetchImpl, now) {
@@ -202,9 +228,12 @@ async function handleAsk(request, env, origin, fetchImpl, now) {
   // A new question needs today's share; a question already under way may finish
   // on the month's remainder, so nobody is left with half an answer.
   if (a.isNewQuestion ? spent >= toDate : spent >= capUSD) return fail("budget_exhausted", 503, origin);
+  let remaining;
   if (a.isNewQuestion) {
     const ip = request.headers.get("cf-connecting-ip") || "unknown";
-    if (!(await rateCheck(env.DB, env, ip, now))) return fail("rate_limited", 429, origin);
+    const t = await rateTake(env.DB, env, ip, now);
+    if (!t.ok) return json({ code: t.code, message: "", remaining: t.remaining }, 429, origin);
+    remaining = t.remaining;
   }
 
   const tools = cfg.tools.map((t, i) => i === cfg.tools.length - 1
@@ -270,7 +299,9 @@ async function handleAsk(request, env, origin, fetchImpl, now) {
            cited.join(" "), tot.n, tot.tin, tot.tout, tot.usd, flags.join(" "), cfg.model,
            String(cfg.corpus_sha256 || "").slice(0, 12)).run();
   }
-  return json({ content: j.content, stop_reason: j.stop_reason }, 200, origin);
+  const out = { content: j.content, stop_reason: j.stop_reason };
+  if (remaining !== undefined) out.remaining = remaining;
+  return json(out, 200, origin);
 }
 
 export async function retention(env, now) {
@@ -295,7 +326,7 @@ export function makeHandler(fetchImpl = (...a) => fetch(...a), clock = () => new
       }
       if (!origin) return fail("forbidden", 403, "", "origin");
       try {
-        if (url.pathname === "/status" && request.method === "GET") return await handleStatus(env, origin, fetchImpl, clock());
+        if (url.pathname === "/status" && request.method === "GET") return await handleStatus(request, env, origin, fetchImpl, clock());
         if (url.pathname === "/ask" && request.method === "POST") return await handleAsk(request, env, origin, fetchImpl, clock());
       } catch (e) {
         return fail("upstream_error", 500, origin);

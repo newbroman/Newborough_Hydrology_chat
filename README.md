@@ -12,13 +12,15 @@ the visitor's browser. This Worker sits between the page and the Claude API:
   `chat/chat_config.json`, so the key cannot be used for anything but this bot;
 - meters spend from each response's token usage and stops at the monthly cap
   (`MONTHLY_CAP_GBP`, with a daily share so one busy day cannot use the month);
-- rate-limits each visitor (10 questions an hour, 30 a day) by a salted hash of the
-  IP address that is never logged and is deleted after two days;
+- gives each visitor 10 questions a day (`RATE_PER_DAY`, resetting at 00:00 UTC),
+  counted by a salted hash of the IP address that is never logged and is deleted
+  after two days. At the limit the page offers the Claude version of the bot, which
+  runs on the visitor's own Claude account and starts a fresh conversation;
 - logs each question with its answer, citations, language, cost and warning flags,
   kept for 365 days. No IP address, user agent or other identifier is stored.
 
-When the cap is reached or the Worker is unavailable, the page falls back to
-searching the documents.
+When the monthly cap is reached or the Worker is unavailable, the page falls back
+to searching the documents.
 
 ## Setting it up (once)
 
@@ -75,7 +77,7 @@ questions, languages, flags and spend.
 
 | To change | Edit |
 |---|---|
-| Monthly cap, rate limits, retention | `[vars]` in `wrangler.toml`, then `npx wrangler deploy` |
+| Monthly cap, daily questions per visitor, retention | `[vars]` in `wrangler.toml`, then `npx wrangler deploy` |
 | Rules, tools, model, answer length | `tools/chat_rules.md`, `tools/chat_tools.json`, `tools/chat_public.json` in Newborough_Hydrology, then ship |
 | Prices (when Anthropic changes them) | `PRICES` in `src/index.js`, then test and deploy |
 

@@ -13,7 +13,8 @@ MONTHLY_CAP_GBP = "10"
 # Conversion for the cap; review against the Anthropic invoice.
 GBP_PER_USD = "0.80"
 RATE_PER_HOUR = "10"
-RATE_PER_DAY = "30"
+# Questions per visitor per day (resets 00:00 UTC). At the limit the page offers the Claude version (D-247).
+RATE_PER_DAY = "10"
 RETENTION_DAYS = "365"
 # Secrets (set with `npx wrangler secret put NAME`, never in this file):
 #   ANTHROPIC_API_KEY   the Claude API key

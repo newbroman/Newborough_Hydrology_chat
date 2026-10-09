@@ -30,7 +30,7 @@ function d1() {
 function envWith(db, extra = {}) {
   return { DB: db, ANTHROPIC_API_KEY: "test-key", IP_SALT: "salt", ALLOWED_ORIGINS: ORIGIN,
            CONFIG_URL: "https://site/chat/chat_config.json", MONTHLY_CAP_GBP: "10", GBP_PER_USD: "0.8",
-           RATE_PER_HOUR: "10", RATE_PER_DAY: "30", RETENTION_DAYS: "365", ...extra };
+           RATE_PER_HOUR: "10", RATE_PER_DAY: "10", RETENTION_DAYS: "365", ...extra };
 }
 
 // Mock fetch: serves the config, and answers the Claude API from a script.
@@ -164,24 +164,53 @@ test("the budget stops new questions at today's share, and lets a question in pr
   assert.equal((await r.json()).code, "budget_exhausted");
   // /status reports it.
   r = await h.fetch(req("/status", { method: "GET" }), env);
-  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.0.2" });
+  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.1.0", remaining: 10, per_day: 10 });
 });
 
-test("rate limit: 10 new questions an hour per visitor; other visitors unaffected", async () => {
+test("daily allowance: 10 a day per visitor, counted on new questions only; others unaffected", async () => {
   _resetConfigCache();
   const db = d1(), env = envWith(db);
-  const script = Array.from({ length: 12 }, () => ({ body: final }));
+  const script = Array.from({ length: 14 }, () => ({ body: final }));
   const h = makeHandler(mockFetch(script), () => NOW);
+  let r = await h.fetch(req("/status", { method: "GET" }), env);
+  let j = await r.json();
+  assert.equal(j.remaining, 10); assert.equal(j.per_day, 10); assert.equal(j.available, true);
   for (let i = 0; i < 10; i++) {
-    const r = await h.fetch(req("/ask", { body: { qid: "q-1000" + i, messages: question() } }), env);
+    r = await h.fetch(req("/ask", { body: { qid: "q-1000" + i, messages: question() } }), env);
     assert.equal(r.status, 200);
+    assert.equal((await r.json()).remaining, 9 - i);
   }
-  let r = await h.fetch(req("/ask", { body: { qid: "q-100099", messages: question() } }), env);
+  r = await h.fetch(req("/ask", { body: { qid: "q-100099", messages: question() } }), env);
   assert.equal(r.status, 429);
-  r = await h.fetch(req("/ask", { body: { qid: "q-100098", messages: question() }, ip: "5.6.7.8" }), env);
+  assert.deepEqual(await r.json(), { code: "daily_limit", message: "", remaining: 0 });
+  r = await h.fetch(req("/status", { method: "GET" }), env);
+  j = await r.json();
+  assert.equal(j.available, false); assert.equal(j.reason, "daily_limit"); assert.equal(j.remaining, 0);
+  // A question already under way is not counted again, so it can finish.
+  const inProgress = [...question(),
+    { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "search_documents", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "[]" }] }];
+  r = await h.fetch(req("/ask", { body: { qid: "q-100009", messages: inProgress } }), env);
   assert.equal(r.status, 200);
+  assert.equal((await r.json()).remaining, undefined);
+  // Another visitor has their own ten; the next day starts afresh.
+  r = await h.fetch(req("/ask", { body: { qid: "q-100098", messages: question() }, ip: "5.6.7.8" }), env);
+  assert.equal((await r.json()).remaining, 9);
+  const tomorrow = makeHandler(mockFetch([{ body: final }]), () => new Date("2026-10-16T00:00:30Z"));
+  r = await tomorrow.fetch(req("/ask", { body: { qid: "q-100097", messages: question() } }), env);
+  assert.equal((await r.json()).remaining, 9);
   const keys = JSON.stringify(db.raw.prepare("SELECT * FROM rate").all());
   assert.ok(!keys.includes("1.2.3.4") && !keys.includes("5.6.7.8"));
+});
+
+test("hourly limit below the daily one still answers rate_limited", async () => {
+  _resetConfigCache();
+  const db = d1(), env = envWith(db, { RATE_PER_HOUR: "2", RATE_PER_DAY: "10" });
+  const h = makeHandler(mockFetch(Array.from({ length: 3 }, () => ({ body: final }))), () => NOW);
+  for (let i = 0; i < 2; i++) await h.fetch(req("/ask", { body: { qid: "q-20000" + i, messages: question() } }), env);
+  const r = await h.fetch(req("/ask", { body: { qid: "q-200009", messages: question() } }), env);
+  assert.equal(r.status, 429);
+  assert.equal((await r.json()).code, "rate_limited");
 });
 
 test("refusals: wrong origin, long question, forged history, bad roles, missing key", async () => {
