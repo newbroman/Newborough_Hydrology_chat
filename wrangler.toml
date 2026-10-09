@@ -22,7 +22,7 @@ RETENTION_DAYS = "365"
 [[d1_databases]]
 binding = "DB"
 database_name = "nrg-chat"
-database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+database_id = "2c4be5ae-d144-4581-b509-b5a160b00cd9"
 
 [triggers]
 # Daily retention sweep, 03:17 UTC.
