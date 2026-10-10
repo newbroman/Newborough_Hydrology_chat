@@ -1,4 +1,5 @@
--- D1 schema for the Newborough Warren chatbot Worker (src/index.js 1.2.0). Safe to re-run.
+-- D1 schema for the Newborough Warren chatbot Worker (src/index.js 1.3.0). Safe to re-run.
+-- A database made before 1.3.0 also needs migrations/0002_prev_question.sql, once.
 -- Apply once: npx wrangler d1 execute nrg-chat --remote --file=schema.sql
 
 -- One row per answered question. No IP address, user agent or any identifier.
@@ -6,6 +7,7 @@ CREATE TABLE IF NOT EXISTS questions (
   qid        TEXT PRIMARY KEY,   -- random id made by the page for one question
   ts         TEXT NOT NULL,      -- UTC, to the minute
   question   TEXT NOT NULL,
+  prev_question TEXT,            -- the visitor's previous question in the same conversation (1.3.0)
   lang       TEXT,               -- en / cy / pl / other (heuristic)
   answer     TEXT,
   citations  TEXT,               -- space-separated ids the answer cited

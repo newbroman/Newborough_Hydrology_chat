@@ -11,7 +11,11 @@
 // Spec: claude/NRG_spec_chatbot_public_2026-10-08.md (Martin, 2026-10-08: log what
 // is asked; GBP 10 a month; the stronger model for everyone; 12 months' retention).
 //
-// VERSION 1.2.0 - 2026-10-09
+// VERSION 1.3.0 - 2026-10-10
+//   1.3.0: each logged question carries prev_question, the visitor's previous question in the
+//     same conversation (the last plain-text user turn of the history the page already sends),
+//     so follow-ups can be read in context. No identifier is added. Martin, 2026-10-10.
+//   1.2.0 (earlier entry follows):
 //   1.2.0: anonymous feedback. POST /feedback {qid?, kind: helpful | wrong | general, text?}
 //     stores one row (no identifier), at most FEEDBACK_PER_DAY (5) per visitor per day on the
 //     same salted-hash counter scheme; kept RETENTION_DAYS. Martin, 2026-10-09: feedback
@@ -31,7 +35,7 @@
 //     back to search; it had answered upstream_error / rate_limited.
 //     An exhausted prepaid credit balance ("credit balance is too low") is treated the same.
 
-export const VERSION = "1.2.0";
+export const VERSION = "1.3.0";
 
 // USD per million tokens. Published prices (platform.claude.com/docs/en/about-claude/pricing,
 // read 2026-10-08). Cache writes are charged at 1.25x input (5-minute cache).
@@ -141,13 +145,18 @@ export function analyse(messages, cfg) {
   const history = messages.slice(0, qi);
   if (history.length > cfg.max_history_turns) return { error: "history too long" };
   if (history.some(m => typeof m.content !== "string")) return { error: "history must be plain text" };
+  // The visitor's previous question in this conversation, for reading follow-ups in context.
+  let prevQuestion = null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === "user") { prevQuestion = history[i].content.trim().slice(0, cfg.max_question_chars) || null; break; }
+  }
   const rounds = messages.slice(qi).filter(m => m.role === "assistant").length;
   if (rounds > cfg.max_rounds) return { error: "too many rounds" };
   // Ids the answer may cite: everything that came back from the page's searches.
   const after = JSON.stringify(messages.slice(qi));
   const retrieved = new Set([...after.matchAll(/\\?"id\\?":\\?"([dnr]\d+)\\?"/g)].map(x => x[1]));
   if (/cluster_summary/.test(after)) retrieved.add("f:outputs/02_cluster_stats.csv");
-  return { question, rounds, isNewQuestion: rounds === 0, retrieved };
+  return { question, prevQuestion, rounds, isNewQuestion: rounds === 0, retrieved };
 }
 
 export function citations(text) {
@@ -298,9 +307,9 @@ async function handleAsk(request, env, origin, fetchImpl, now) {
       "SELECT COUNT(*) AS n, SUM(tokens_in) AS tin, SUM(tokens_out) AS tout, SUM(cost_usd) AS usd FROM rounds WHERE qid = ?"
     ).bind(qid).first();
     await env.DB.prepare(
-      "INSERT INTO questions (qid, ts, question, lang, answer, citations, rounds, tokens_in, tokens_out, cost_usd, flags, model, corpus) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(qid) DO NOTHING"
-    ).bind(qid, now.toISOString().slice(0, 16) + "Z", a.question, detectLanguage(a.question), answer,
+      "INSERT INTO questions (qid, ts, question, prev_question, lang, answer, citations, rounds, tokens_in, tokens_out, cost_usd, flags, model, corpus) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(qid) DO NOTHING"
+    ).bind(qid, now.toISOString().slice(0, 16) + "Z", a.question, a.prevQuestion, detectLanguage(a.question), answer,
            cited.join(" "), tot.n, tot.tin, tot.tout, tot.usd, flags.join(" "), cfg.model,
            String(cfg.corpus_sha256 || "").slice(0, 12)).run();
   }

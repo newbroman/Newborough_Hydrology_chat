@@ -164,7 +164,7 @@ test("the budget stops new questions at today's share, and lets a question in pr
   assert.equal((await r.json()).code, "budget_exhausted");
   // /status reports it.
   r = await h.fetch(req("/status", { method: "GET" }), env);
-  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.2.0", remaining: 10, per_day: 10 });
+  assert.deepEqual(await r.json(), { available: false, reason: "budget", version: "1.3.0", remaining: 10, per_day: 10 });
 });
 
 test("daily allowance: 10 a day per visitor, counted on new questions only; others unaffected", async () => {
@@ -339,4 +339,18 @@ test("retention also deletes feedback older than a year", async () => {
   db.raw.prepare("INSERT INTO feedback (ts, qid, kind, text) VALUES ('2025-10-01T00:00Z', NULL, 'general', 'old'), ('2026-10-01T00:00Z', NULL, 'general', 'new')").run();
   await retention(env, NOW);
   assert.deepEqual(db.raw.prepare("SELECT text FROM feedback").all().map(r => r.text), ["new"]);
+});
+
+test("a follow-up is logged with the previous question of its conversation, and a first question without", async () => {
+  _resetConfigCache();
+  const db = d1(), env = envWith(db), f = mockFetch([{ body: final }, { body: final }]);
+  const h = makeHandler(f, () => NOW);
+  await h.fetch(req("/ask", { body: { qid: "q-first1", messages: question("Why use clusters") } }), env);
+  const follow = [{ role: "user", content: "Why use clusters" }, { role: "assistant", content: "Because ..." },
+                  ...question("How was it tested")];
+  const r = await h.fetch(req("/ask", { body: { qid: "q-second", messages: follow } }), env);
+  assert.equal(r.status, 200);
+  const rows = db.raw.prepare("SELECT qid, question, prev_question FROM questions ORDER BY qid").all();
+  assert.deepEqual(rows.map(x => [x.question, x.prev_question]),
+                   [["Why use clusters", null], ["How was it tested", "Why use clusters"]]);
 });

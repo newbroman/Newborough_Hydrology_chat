@@ -16,7 +16,8 @@ the visitor's browser. This Worker sits between the page and the Claude API:
   counted by a salted hash of the IP address that is never logged and is deleted
   after two days. At the limit the page offers the Claude version of the bot, which
   runs on the visitor's own Claude account and starts a fresh conversation;
-- logs each question with its answer, citations, language, cost and warning flags,
+- logs each question with its answer, citations, language, cost and warning flags, and for a
+  follow-up the previous question of the same conversation (so it reads in context),
   kept for 365 days. No IP address, user agent or other identifier is stored.
 - takes anonymous feedback on answers ("Helpful", "Something's wrong" with a note) and
   general notes, at most 5 per visitor per day, kept 365 days. Visitors who want a reply
